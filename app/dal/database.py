@@ -3,11 +3,10 @@ from psycopg2.extras import RealDictCursor
 
 
 def get_db_connection():
-    conn = psycopg2.connect(
+    return psycopg2.connect(
         dbname="url_shortener",
-        user="url_shortener_app",
-        password="4*GB%!VjCF7K48Vh",
+        user="postgres",
+        password="postgres",
         host="localhost",
-        port=5432
+        port=6543,
     )
-    return conn

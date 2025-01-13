@@ -1,5 +1,9 @@
+import logging
+
 from fastapi import FastAPI
 from app.controller.router import router
+
+logging.basicConfig(level=logging.DEBUG)
 
 app = FastAPI(
     title="URL Shortener API",
