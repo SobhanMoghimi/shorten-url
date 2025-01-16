@@ -147,3 +147,15 @@ def generate_charts():
             plt.tight_layout()
             plt.savefig(os.path.join(charts_folder, f"access_per_day_{shortened_url}.jpeg"))
             plt.close()
+
+def delete_inactive_urls():
+    """
+    Delete URLs that have not been accessed for more than 7 days.
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("CALL delete_inactive_urls();")
+            conn.commit()
+    finally:
+        conn.close()

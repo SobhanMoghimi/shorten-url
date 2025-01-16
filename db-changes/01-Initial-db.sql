@@ -11,7 +11,7 @@ CREATE TABLE urls
 CREATE TABLE urls_access_logs (
     "log_uuid"         uuid                     NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
     "created_at"       timestamp with time zone NOT NULL DEFAULT transaction_timestamp(),
-    "url_uuid"         uuid                     NOT NULL REFERENCES urls(url_uuid)
+    "url_uuid"         uuid                     NOT NULL REFERENCES urls(url_uuid) ON DELETE CASCADE
 );
 
 CREATE INDEX "urls_url" ON "urls" ("url" varchar_pattern_ops);
@@ -119,21 +119,6 @@ FOR EACH ROW
 EXECUTE FUNCTION assign_shortened_url();
 
 
-CREATE OR REPLACE FUNCTION delete_expired_urls()
-RETURNS VOID AS $$
-BEGIN
-    DELETE FROM urls
-    WHERE url_uuid IN (
-        SELECT urls.url_uuid
-        FROM urls JOIN urls_access_logs logs ON urls.url_uuid = logs.url_uuid
-        GROUP BY urls.url_uuid
-        HAVING COALESCE(MAX(logs.created_at), urls.created_at) < NOW() - INTERVAL '7 days'
-    );
-END;
-$$ LANGUAGE plpgsql;
-
-
--- View for All URLs with Time Remaining Until Expiration
 CREATE OR REPLACE VIEW urls_time_since_last_access AS
 SELECT
     urls.shortened_url,
@@ -173,4 +158,20 @@ FROM urls_access_logs l
 JOIN urls u ON l.url_uuid = u.url_uuid
 GROUP BY u.shortened_url, access_date
 ORDER BY access_date DESC, total_accesses DESC;
+
+
+CREATE OR REPLACE PROCEDURE delete_inactive_urls()
+LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM urls
+    WHERE url_uuid IN (
+        SELECT urls.url_uuid
+        FROM urls
+        LEFT JOIN urls_access_logs l ON urls.url_uuid = l.url_uuid
+        GROUP BY urls.url_uuid
+        HAVING COALESCE(MAX(l.created_at), urls.created_at) < NOW() - INTERVAL '7 days'
+    );
+    RAISE NOTICE 'Inactive URLs older than 7 days have been deleted.';
+END;
+$$;
 
