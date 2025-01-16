@@ -1,47 +1,76 @@
-CREATE
-DATABASE url_shortener;
+CREATE DATABASE url_shortener;
 
 CREATE TABLE urls
 (
     "url_uuid"         uuid                     NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
     "created_at"       timestamp with time zone NOT NULL             DEFAULT transaction_timestamp(),
---     "last_accessed_at" timestamp with time zone NOT NULL             DEFAULT transaction_timestamp(),
---     "accessed_count"   INT                      NOT NULL             DEFAULT 0,
     "url"              VARCHAR                  NOT NULL,
     "shortened_url"    CHAR(6) UNIQUE           NOT NULL
 );
 
-CREATE TABLE urls_access_logs(
+CREATE TABLE urls_access_logs (
     "log_uuid"         uuid                     NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-    "created_at"       timestamp with time zone NOT NULL             DEFAULT transaction_timestamp(),
-    "url_uuid" uuid NOT NULL FOREIGN KEY REFERENCES urls(url_uuid)
-)
-
+    "created_at"       timestamp with time zone NOT NULL DEFAULT transaction_timestamp(),
+    "url_uuid"         uuid                     NOT NULL REFERENCES urls(url_uuid)
+);
 
 CREATE INDEX "urls_url" ON "urls" ("url" varchar_pattern_ops);
-CREATE INDEX "urls_last_accessed_at" ON "urls" ("last_accessed_at" DESC NULLS LAST);
-CREATE INDEX "urls_accessed_count" ON "urls" ("accessed_count" DESC NULLS LAST);
 CREATE INDEX "urls_shortened_url" ON "urls" ("shortened_url");
+
+CREATE OR REPLACE PROCEDURE add_log(url_id UUID)
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO urls_access_logs (url_uuid)
+    VALUES (url_id);
+END;
+$$;
+
 
 CREATE OR REPLACE FUNCTION get_url(short_url CHAR(6))
 RETURNS TABLE (
     url_uuid UUID,
     created_at TIMESTAMP WITH TIME ZONE,
-    last_accessed_at TIMESTAMP WITH TIME ZONE,
-    accessed_count INT,
     url VARCHAR,
     shortened_url CHAR(6)
 ) AS $$
+DECLARE
+    url_id UUID;
 BEGIN
-    UPDATE urls
-    SET accessed_count = urls.accessed_count + 1,
-        last_accessed_at = transaction_timestamp()
-    WHERE urls.shortened_url = short_url;
-
-    RETURN QUERY
-    SELECT *
+    SELECT urls.url_uuid INTO url_id
     FROM urls
     WHERE urls.shortened_url = short_url;
+
+    IF url_id IS NOT NULL THEN
+        CALL add_log(url_id);
+
+        RETURN QUERY
+        SELECT urls.url_uuid, urls.created_at, urls.url, urls.shortened_url
+        FROM urls
+        WHERE urls.shortened_url = short_url;
+    ELSE
+        RETURN;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+CREATE OR REPLACE FUNCTION get_short_url(long_url VARCHAR)
+RETURNS CHAR(6) AS $$
+DECLARE
+    url_id UUID;
+    short_url CHAR(6);
+BEGIN
+    SELECT url_uuid, shortened_url INTO url_id, short_url
+    FROM urls
+    WHERE url = long_url;
+
+    IF url_id IS NOT NULL THEN
+        CALL add_log(url_id);
+        RETURN short_url;
+    ELSE
+        RETURN null;
+    END IF;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -52,22 +81,19 @@ DECLARE
 new_url VARCHAR(6);
 BEGIN
     LOOP
-        -- Generate a random 6-character string
-new_url := (
+        new_url := (
             SELECT string_agg(substr('abcdefghijklmnopqrstuvwxyz0123456789', floor(random() * 36)::int + 1, 1), '')
             FROM generate_series(1, 6)
         );
 
-        -- Check if it already exists in the table
-        IF
-NOT EXISTS (
+        IF NOT EXISTS (
             SELECT 1
             FROM urls
             WHERE shortened_url = new_url
         ) THEN
             RETURN new_url;
-END IF;
-END LOOP;
+        END IF;
+    END LOOP;
 END;
 $$
 LANGUAGE plpgsql;
@@ -97,34 +123,54 @@ CREATE OR REPLACE FUNCTION delete_expired_urls()
 RETURNS VOID AS $$
 BEGIN
     DELETE FROM urls
-    WHERE last_accessed_at < NOW() - INTERVAL '7 days';
+    WHERE url_uuid IN (
+        SELECT urls.url_uuid
+        FROM urls JOIN urls_access_logs logs ON urls.url_uuid = logs.url_uuid
+        GROUP BY urls.url_uuid
+        HAVING COALESCE(MAX(logs.created_at), urls.created_at) < NOW() - INTERVAL '7 days'
+    );
 END;
 $$ LANGUAGE plpgsql;
 
 
--- View for Total New URLs Created Today
-CREATE OR REPLACE VIEW new_urls_today AS
-SELECT COUNT(*) AS total_new_urls
-FROM urls
-WHERE created_at::DATE = CURRENT_DATE;
-
--- View for Total Accesses Today
-CREATE OR REPLACE VIEW total_accesses_today AS
-SELECT COUNT(*) AS total_accesses
-FROM urls
-WHERE last_accessed_at::DATE = CURRENT_DATE;
-
--- View for Top 3 Most Accessed URLs
-CREATE OR REPLACE VIEW top_3_accessed_urls AS
-SELECT shortened_url, accessed_count
-FROM urls
-ORDER BY accessed_count DESC
-LIMIT 3;
-
 -- View for All URLs with Time Remaining Until Expiration
 CREATE OR REPLACE VIEW urls_time_since_last_access AS
 SELECT
-    shortened_url,
-    accessed_count,
-    NOW() - last_accessed_at AS time_since_last_access
-FROM urls;
+    urls.shortened_url,
+    COUNT(logs.log_uuid) AS accessed_count,
+    NOW() - MAX(logs.created_at) AS time_since_last_access
+FROM urls
+LEFT JOIN urls_access_logs logs ON urls.url_uuid = logs.url_uuid
+GROUP BY urls.shortened_url;
+
+
+CREATE OR REPLACE VIEW top_3_accessed_urls AS
+SELECT
+    urls.shortened_url,
+    urls.url AS long_url,
+    COUNT(logs.log_uuid) AS access_count
+FROM urls
+JOIN urls_access_logs logs ON urls.url_uuid = logs.url_uuid
+GROUP BY urls.shortened_url, urls.url
+ORDER BY access_count DESC
+LIMIT 3;
+
+
+CREATE OR REPLACE VIEW registered_urls_each_day AS
+SELECT
+    created_at::DATE AS registration_date,
+    COUNT(*) AS total_new_urls
+FROM urls
+GROUP BY registration_date
+ORDER BY registration_date DESC;
+
+CREATE OR REPLACE VIEW accesses_per_day_per_url AS
+SELECT
+    u.shortened_url,
+    l.created_at::DATE AS access_date,
+    COUNT(*) AS total_accesses
+FROM urls_access_logs l
+JOIN urls u ON l.url_uuid = u.url_uuid
+GROUP BY u.shortened_url, access_date
+ORDER BY access_date DESC, total_accesses DESC;
+

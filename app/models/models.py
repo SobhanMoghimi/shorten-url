@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic import BaseModel, HttpUrl
 
 
@@ -29,3 +31,7 @@ class URLsTimeSinceLastAccessDTO(BaseModel):
     shortened_url: str
     accessed_count: int
     time_since_last_access: str
+
+class RegisteredURLsEachDayDTO(BaseModel):
+    registration_date: date
+    total_new_urls: int

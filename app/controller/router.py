@@ -1,5 +1,8 @@
+import os
+
 from fastapi import APIRouter, HTTPException
 from pydantic import HttpUrl
+from starlette.responses import FileResponse
 
 from app.models.models import (
     NewURLsTodayDTO,
@@ -8,15 +11,14 @@ from app.models.models import (
     URLsTimeSinceLastAccessDTO,
     ShortenURLRequest,
     ShortenURLResponse,
-    RedirectResponseModel
+    RedirectResponseModel, RegisteredURLsEachDayDTO
 )
 from app.dal.dal import (
     save_url_to_db,
     get_top_3_accessed_urls,
     get_urls_time_since_last_access,
     get_long_url,
-    get_total_accesses_today,
-    get_new_urls_today
+    get_accesses_per_day_per_url, get_registered_urls_each_day, generate_charts
 )
 
 router = APIRouter()
@@ -37,21 +39,6 @@ def redirect_to_url(short_url: str):
     else:
         raise HTTPException(status_code=404, detail="Short URL not found")
 
-
-@router.get("/dashboard/new_urls_today", response_model=NewURLsTodayDTO, tags=["Dashboard"])
-def dashboard_new_urls_today():
-    if data := get_new_urls_today():
-        return data
-    raise HTTPException(status_code=404, detail="No data found")
-
-
-@router.get("/dashboard/total_accesses_today", response_model=TotalAccessesTodayDTO, tags=["Dashboard"])
-def dashboard_total_accesses_today():
-    if data := get_total_accesses_today():
-        return data
-    raise HTTPException(status_code=404, detail="No data found")
-
-
 @router.get("/dashboard/top_3_accessed_urls", response_model=list[TopAccessedURLDTO], tags=["Dashboard"])
 def dashboard_top_3_accessed_urls():
     if data := get_top_3_accessed_urls():
@@ -65,3 +52,38 @@ def dashboard_urls_time_since_last_access():
     if data := get_urls_time_since_last_access():
         return data
     raise HTTPException(status_code=404, detail="No data found")
+
+from fastapi import APIRouter, HTTPException
+
+
+
+@router.get("/dashboard/accesses_per_day_per_url", tags=["Dashboard"])
+def dashboard_accesses_per_day_per_url():
+    if data := get_accesses_per_day_per_url():
+        return data
+    raise HTTPException(status_code=404, detail="No data found")
+
+
+
+@router.get("/dashboard/registered_urls_each_day", response_model=list[RegisteredURLsEachDayDTO], tags=["Dashboard"])
+def dashboard_registered_urls_each_day():
+    if data := get_registered_urls_each_day():
+        return data
+    raise HTTPException(status_code=404, detail="No data found")
+
+
+@router.post("/dashboard/generate_charts", tags=["Dashboard"])
+def dashboard_generate_charts():
+    try:
+        generate_charts()
+        return {"message": "Charts generated successfully and saved to the 'charts' folder."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating charts: {str(e)}") from e
+
+
+@router.get("/dashboard/charts/{chart_name}", tags=["Dashboard"])
+def get_chart(chart_name: str):
+    chart_path = os.path.join("charts", chart_name)
+    if os.path.exists(chart_path):
+        return FileResponse(chart_path)
+    raise HTTPException(status_code=404, detail="Chart not found")
