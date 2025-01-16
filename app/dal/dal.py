@@ -54,7 +54,7 @@ def get_urls_time_since_last_access() -> list[URLsTimeSinceLastAccessDTO]:
                 URLsTimeSinceLastAccessDTO(
                     shortened_url=row[0],
                     accessed_count=row[1],
-                    time_since_last_access=str(row[2]),  # Assuming PostgreSQL INTERVAL is returned as a string
+                    time_since_last_access=str(row[2]),
                 )
                 for row in results
             ]
@@ -134,7 +134,6 @@ def generate_charts():
         plt.savefig(os.path.join(charts_folder, "total_daily_accesses.jpeg"))
         plt.close()
 
-        # Generate charts for each shortened URL
         for shortened_url in df["shortened_url"].unique():
             link_data = df[df["shortened_url"] == shortened_url]
             dates = link_data["access_date"]
